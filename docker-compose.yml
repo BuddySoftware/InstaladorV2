@@ -6,7 +6,7 @@ x-logging: &default-logging
 
 services:
   traefik:
-    image: traefik:v2.11.7
+    image: traefik:v2.11.38
     container_name: traefik
     restart: unless-stopped
     security_opt:
