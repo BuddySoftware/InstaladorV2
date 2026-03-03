@@ -121,7 +121,7 @@ sudo reboot
 
 ```bash
 cd /root
-git clone https://github.com/oplanov2-entrega/instalador.git
+git clone https://github.com/BuddySoftware/InstaladorV2.git
 cd instalador
 ```
 
