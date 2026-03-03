@@ -52,7 +52,6 @@ check_command() {
 install_docker() {
   if ! check_command "docker"; then
     echo_info "Instalando Docker..."
-    local docker_version="5:28.5.2-1~ubuntu.22.04~jammy"
     local codename
     if command -v lsb_release >/dev/null 2>&1; then
       codename=$(lsb_release -cs)
@@ -75,14 +74,15 @@ install_docker() {
     fi
 
     sudo apt-get update
+
+    sudo apt-mark unhold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
+
     sudo apt-get install -y \
-      docker-ce="$docker_version" \
-      docker-ce-cli="$docker_version" \
+      docker-ce \
+      docker-ce-cli \
       containerd.io \
       docker-buildx-plugin \
       docker-compose-plugin
-
-    sudo apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     sudo usermod -aG docker "$USER" || echo_warning "Falha ao adicionar usuário ao grupo docker. Você pode precisar reiniciar sua sessão."
     echo_success "Docker instalado."
     echo_info "Por favor, faça logout e login novamente ou reinicie o sistema para que as alterações no grupo docker tenham efeito, ou execute 'newgrp docker' no terminal atual."
