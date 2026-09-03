@@ -6,7 +6,7 @@ x-logging: &default-logging
 
 services:
   traefik:
-    image: traefik:v3.6.5
+    image: traefik:v3.7.12
     container_name: traefik
     restart: unless-stopped
     security_opt:
@@ -19,6 +19,7 @@ services:
       - "--providers.docker.network=network_public"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=0"
       - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge=true"
       - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.letsencryptresolver.acme.email=${EMAIL}"
@@ -48,14 +49,21 @@ services:
       retries: 3
     logging: *default-logging
 
-  whaticket-postgres:
+  soluschat-postgres:
     image: postgres:16.10
-    container_name: whaticket-postgres
+    container_name: soluschat-postgres
     restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - statement_timeout=60000
+      - -c
+      - idle_in_transaction_session_timeout=60000
     environment:
-      - POSTGRES_PASSWORD=${DB_PASS}
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_DB=${DB_NAME}
+      - "POSTGRES_PASSWORD=${DB_PASS}"
+      - "POSTGRES_USER=${DB_USER}"
+      - "POSTGRES_DB=${DB_NAME}"
+      - TZ=America/Sao_Paulo
     volumes:
       - postgres_volume:/var/lib/postgresql/data
     networks:
@@ -68,16 +76,16 @@ services:
       start_period: 30s
     logging: *default-logging
 
-  whaticket-pgbouncer:
+  soluschat-pgbouncer:
     image: edoburu/pgbouncer:v1.24.1-p1
-    container_name: whaticket-pgbouncer
+    container_name: soluschat-pgbouncer
     restart: unless-stopped
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASS}
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASS}"
       TZ: America/Sao_Paulo
     depends_on:
-      whaticket-postgres:
+      soluschat-postgres:
         condition: service_healthy
     volumes:
       - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
@@ -86,9 +94,9 @@ services:
       - network_public
     logging: *default-logging
 
-  whaticket-redis:
+  soluschat-redis:
     image: redis:7.2-alpine
-    container_name: whaticket-redis
+    container_name: soluschat-redis
     restart: unless-stopped
     command:
       [
@@ -99,7 +107,7 @@ services:
         "yes",
       ]
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - "REDIS_PASSWORD=${REDIS_PASSWORD}"
       - TZ=America/Sao_Paulo
     volumes:
       - redis_volume:/data
@@ -116,13 +124,13 @@ services:
         hard: 100000
     logging: *default-logging
 
-  whaticket-rabbitmq:
+  soluschat-rabbitmq:
     image: rabbitmq:3.13-management
-    container_name: whaticket-rabbitmq
+    container_name: soluschat-rabbitmq
     restart: unless-stopped
     environment:
-      - RABBITMQ_DEFAULT_USER=${RABBIT_USER}
-      - RABBITMQ_DEFAULT_PASS=${RABBIT_PASS}
+      - "RABBITMQ_DEFAULT_USER=${RABBIT_USER}"
+      - "RABBITMQ_DEFAULT_PASS=${RABBIT_PASS}"
       - TZ=America/Sao_Paulo
     volumes:
       - rabbitmq_volume:/var/lib/rabbitmq
@@ -154,55 +162,67 @@ services:
       "
     environment:
       # AMBIENTE
-      - NODE_ENV=${NODE_ENV}
+      - "NODE_ENV=${NODE_ENV}"
+      - TZ=America/Sao_Paulo
       # URLS E PORTAS
-      - BACKEND_URL=${BACKEND_URL}
-      - FRONTEND_URL=${FRONTEND_URL}
+      - "BACKEND_URL=${BACKEND_URL}"
+      - "FRONTEND_URL=${FRONTEND_URL}"
       - PORT=8080
       - PROXY_PORT=443
       # LOGS
       - LOG_LEVEL=info
       # GERAL
-      - TIMEOUT_TO_IMPORT_MESSAGE=${TIMEOUT_TO_IMPORT_MESSAGE}
+      - TIMEOUT_TO_IMPORT_MESSAGE=330
       # SEGURANÇA e AUTENTICAÇÃO
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - COMPANY_TOKEN=${COMPANY_TOKEN}
-      - ENV_TOKEN=OPLANOV2
-      - MASTER_KEY=${MASTER_KEY}
+      - "JWT_SECRET=${JWT_SECRET}"
+      - "JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}"
+      - "COMPANY_TOKEN=${COMPANY_TOKEN}"
+      - "ENV_TOKEN=${ENV_TOKEN}"
+      - "MASTER_KEY=${MASTER_KEY}"
+      - "MASTER_SETTINGS_ENCRYPTION_KEY=${MASTER_SETTINGS_ENCRYPTION_KEY}"
       # BAILEYS
       - BAILEYS_LOG_LEVEL=error
       - SESSIONS_DIR=./private
       # BANCO DE DADOS
-      - DB_DIALECT=${DB_DIALECT}
-      - DB_HOST=whaticket-pgbouncer
+      - DB_DIALECT=postgres
+      - "DB_HOST=soluschat-pgbouncer"
       - DB_PORT=6432
-      - DB_HOST_DIRECT=whaticket-postgres
+      - "DB_HOST_DIRECT=soluschat-postgres"
       - DB_PORT_DIRECT=5432
-      - DB_USER=${DB_USER}
-      - DB_PASS=${DB_PASS}
-      - DB_NAME=${DB_NAME}
+      - "DB_USER=${DB_USER}"
+      - "DB_PASS=${DB_PASS}"
+      - "DB_NAME=${DB_NAME}"
+      - DB_POOL_MAX=30
+      - DB_POOL_MIN=5
       # REDIS
-      - REDIS_HOST=whaticket-redis
+      - "REDIS_HOST=soluschat-redis"
       - REDIS_PORT=6379
-      - REDIS_URI=redis://:${REDIS_PASSWORD}@whaticket-redis:6379
+      - "REDIS_URI=${REDIS_URI}"
       # MESSAGERIA
-      - RABBITMQ_HOST=whaticket-rabbitmq
+      - "RABBITMQ_HOST=soluschat-rabbitmq"
       - RABBITMQ_PORT=5672
-      - RABBITMQ_URI=amqp://${RABBIT_USER}:${RABBIT_PASS}@whaticket-rabbitmq:5672
+      - "RABBITMQ_URI=${RABBITMQ_URI}"
       - RABBITMQ_EXCHANGE=messages
+      - RABBITMQ_EXCHANGE_DLQ=messages.dlq
       - RABBITMQ_QUEUE_PREFIX=onticket
       - RABBITMQ_RETRY_DELAY=3000
+      # VOZ
+      - WACALLS_BASE_URL=http://soluschat-wacalls:8080
+      - "WACALLS_SERVICE_TOKEN=${WACALLS_SERVICE_TOKEN}"
       # FACEBOOK
-      - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
-      - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
-      - VERIFY_TOKEN=${VERIFY_TOKEN}
+      - "FACEBOOK_APP_ID=${FACEBOOK_APP_ID}"
+      - "FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}"
+      - "VERIFY_TOKEN=${VERIFY_TOKEN}"
+      # UAZAPI
+      - "UAZAPI_BASE_URL=${UAZAPI_BASE_URL}"
+      - "UAZAPI_ADMIN_TOKEN=${UAZAPI_ADMIN_TOKEN}"
+      - "UAZAPI_WEBHOOK_URL=${BACKEND_URL}"
       # PAGAMENTOS (opcional)
-      - GERENCIANET_SANDBOX=${GERENCIANET_SANDBOX}
-      - GERENCIANET_CLIENT_ID=${GERENCIANET_CLIENT_ID}
-      - GERENCIANET_CLIENT_SECRET=${GERENCIANET_CLIENT_SECRET}
-      - GERENCIANET_CHAVEPIX=${GERENCIANET_CHAVEPIX}
-      - GERENCIANET_PIX_CERT=${GERENCIANET_PIX_CERT}
+      - "GERENCIANET_SANDBOX=${GERENCIANET_SANDBOX}"
+      - "GERENCIANET_CLIENT_ID=${GERENCIANET_CLIENT_ID}"
+      - "GERENCIANET_CLIENT_SECRET=${GERENCIANET_CLIENT_SECRET}"
+      - "GERENCIANET_CHAVEPIX=${GERENCIANET_CHAVEPIX}"
+      - "GERENCIANET_PIX_CERT=${GERENCIANET_PIX_CERT}"
       # GRUPOS
       - GROUP_META_TTL_MS=300000
       - GROUP_META_CACHE_MAX=5000
@@ -221,13 +241,13 @@ services:
     networks:
       - network_public
     depends_on:
-      whaticket-postgres:
+      soluschat-postgres:
         condition: service_healthy
-      whaticket-pgbouncer:
+      soluschat-pgbouncer:
         condition: service_started
-      whaticket-redis:
+      soluschat-redis:
         condition: service_healthy
-      whaticket-rabbitmq:
+      soluschat-rabbitmq:
         condition: service_healthy
     logging: *default-logging
 
@@ -237,14 +257,14 @@ services:
     container_name: frontend
     restart: unless-stopped
     environment:
-      - NODE_ENV=${NODE_ENV}
+      - "NODE_ENV=${NODE_ENV}"
       - PORT=3000
-      - REACT_APP_BACKEND_URL=${BACKEND_URL}
-      - REACT_APP_FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
-      - REACT_APP_NUMBER_SUPPORT=${NUMBER_SUPPORT}
-      - REACT_APP_REQUIRE_BUSINESS_MANAGEMENT=${REQUIRE_BUSINESS_MANAGEMENT}
-      - REACT_APP_ENV_TOKEN=OPLANOV2
-      - ENV_TOKEN=OPLANOV2
+      - "REACT_APP_BACKEND_URL=${BACKEND_URL}"
+      - "REACT_APP_FACEBOOK_APP_ID=${FACEBOOK_APP_ID}"
+      - "REACT_APP_NUMBER_SUPPORT=${NUMBER_SUPPORT}"
+      - "REACT_APP_REQUIRE_BUSINESS_MANAGEMENT=${REQUIRE_BUSINESS_MANAGEMENT}"
+      - "REACT_APP_ENV_TOKEN=${ENV_TOKEN}"
+      - "ENV_TOKEN=${ENV_TOKEN}"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=Host(`${FRONTEND_DOMAIN}`)"
@@ -256,6 +276,31 @@ services:
       - network_public
     logging: *default-logging
 
+  wacalls:
+    image: ghcr.io/${GHCR_IMAGE_USER}/${GHCR_IMAGE_REPO}/wacalls:${DOCKER_TAG}
+    pull_policy: always
+    container_name: soluschat-wacalls
+    restart: unless-stopped
+    environment:
+      - TZ=America/Sao_Paulo
+      - "WACALLS_DSN=${WACALLS_DSN}"
+      - "WACALLS_SERVICE_TOKEN=${WACALLS_SERVICE_TOKEN}"
+      - "WACALLS_PUBLIC_IP=${WACALLS_PUBLIC_IP}"
+      - "WACALLS_WEBRTC_UDP_PORT=${WACALLS_WEBRTC_UDP_PORT}"
+      - "WEBRTC_UDP_PORT=${WACALLS_WEBRTC_UDP_PORT}"
+      - WACALLS_RECORDINGS_DIR=/data/recordings
+      - WACALLS_RECORDINGS_MAX_BYTES=5368709120
+    ports:
+      - "${WACALLS_WEBRTC_UDP_PORT}:${WACALLS_WEBRTC_UDP_PORT}/udp"
+    volumes:
+      - wacalls_recordings:/data
+    networks:
+      - network_public
+    depends_on:
+      soluschat-postgres:
+        condition: service_healthy
+    logging: *default-logging
+
 volumes:
   traefik_letsencrypt:
   postgres_volume:
@@ -263,6 +308,7 @@ volumes:
   rabbitmq_volume:
   backend_private:
   backend_public:
+  wacalls_recordings:
 
 networks:
   network_public:

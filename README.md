@@ -1,6 +1,6 @@
-# 🚀 Instalador OPLANO
+# 🚀 Instalador SolusChat
 
-Automatize a implantação do OPLANO em poucos minutos. Este instalador prepara o servidor, instala dependências, aplica otimizações, configura os serviços Docker e deixa tudo rodando com HTTPS/SSL automático via Traefik.
+Automatize a implantação do SolusChat em poucos minutos. Este instalador prepara o servidor, instala dependências, aplica otimizações, configura os serviços Docker e deixa tudo rodando com HTTPS/SSL automático via Traefik.
 
 ## 📋 Índice
 
@@ -24,8 +24,8 @@ Em uma única execução, o instalador:
 2. **Aplica otimizações de performance** no sistema operacional e no Docker daemon.
 3. **Coleta informações** (domínios, e-mail, integrações) com perguntas simples e exemplos.
 4. **Gera senhas fortes** automaticamente (banco, Redis, RabbitMQ, JWT, etc.).
-5. **Configura variáveis de ambiente** e gera o arquivo `.env` completo.
-6. **Copia e ajusta o `docker-compose.yml`** com base nas suas respostas.
+5. **Configura variáveis de ambiente** com base nas suas respostas.
+6. **Renderiza o `docker-compose.yml`** com os valores ja escritos dentro dele.
 7. **Baixa e inicia os containers** com certificados HTTPS válidos.
 8. **Mostra um resumo final** com os dados de acesso e comandos úteis.
 
@@ -45,12 +45,13 @@ Tudo isso sem exigir conhecimentos avançados de Linux ou Docker.
 
 ### 📦 Serviços prontos para produção
 1. **Traefik** – Proxy reverso com HTTPS automático.
-2. **Backend** – API do OPLANO (Node.js).
+2. **Backend** – API do SolusChat (Node.js).
 3. **Frontend** – Interface web (ReactJs).
 4. **PostgreSQL 16** – Banco de dados otimizado.
 5. **PgBouncer** – Pool de conexões.
 6. **Redis (Valkey 7.2)** – Cache e gerenciamento de sessões.
 7. **RabbitMQ 3.13** – Filas para processamento de mensagens.
+8. **WaCalls** – Serviço de voz: mídia WebRTC das chamadas de WhatsApp.
 
 ## 🛠️ Pré-requisitos
 
@@ -73,7 +74,7 @@ Você precisa de **2 subdomínios**, ambos apontando (registro tipo A) para o IP
 
 | Domínio                | Para que serve       | Exemplo               |
 | ---------------------- | -------------------- | --------------------- |
-| Frontend (interface)   | Painel web do OPLANO | `app.seudominio.com`  |
+| Frontend (interface)   | Painel web do SolusChat | `app.seudominio.com`  |
 | Backend (API)          | API do sistema       | `api.seudominio.com`  |
 
 ⚠️ **Importante:** sem os domínios apontados, o SSL não será gerado.
@@ -144,8 +145,8 @@ chmod +x install.sh
 | Pergunta                                   | O que digitar                                      |
 | ------------------------------------------ | -------------------------------------------------- |
 | Ambiente (Produção ou Desenvolvimento)     | Digite **1** para Produção (tag `latest`).         |
-| Usuário do GHCR                            | Pressione **Enter** para usar `oplanov2-entrega`.        |
-| Repositório do GHCR                        | Pressione **Enter** para usar `entrega-oplanov2`.      |
+| Usuário do GHCR                            | Pressione **Enter** para usar `BuddySoftware`.           |
+| Repositório do GHCR                        | Pressione **Enter** para usar `soluschat-V2`.          |
 | E-mail para SSL                            | Digite um e-mail válido (receberá alertas SSL).    |
 | Domínio do FRONTEND                        | Ex.: `app.seudominio.com`.                         |
 | Domínio do BACKEND                         | Ex.: `api.seudominio.com`.                         |
@@ -164,7 +165,7 @@ O instalador mostrará tudo o que será aplicado. Digite `s` para continuar.
 Etapas executadas automaticamente:
 1. Instala Docker / Docker Compose / Node.js (se necessário).
 2. Aplica otimizações do sistema e do Docker.
-3. Salva o arquivo `.env` em `/root/oplano/`.
+3. Renderiza o `docker-compose.yml` no diretorio da aplicacao, com permissao `600`.
 4. Copia o `docker-compose.yml` e ajusta as imagens.
 5. Gera arquivos extras (PgBouncer, RabbitMQ, etc.).
 6. Faz login no GitHub Container Registry.
@@ -179,9 +180,11 @@ Tempo médio: **5 a 10 minutos**, dependendo da velocidade da internet e do serv
 
 > O certificado SSL pode levar até 2 minutos para ser emitido no primeiro acesso.
 
-### 9. Faça backup do `.env`
+### 9. Faça backup do `docker-compose.yml`
 
-O arquivo `/root/oplano/.env` contém todas as senhas geradas. Baixe e guarde em local seguro.
+Nao existe mais arquivo `.env`. Os valores ficam literais dentro do
+`docker-compose.yml` renderizado, com permissao `600`. Esse arquivo contem todas
+as senhas geradas: baixe e guarde em local seguro.
 
 ## 📦 Opções de instalação
 
@@ -199,7 +202,7 @@ O instalador apresenta 5 opções no menu inicial:
 - Use **Opção 1** para novas instalações em produção.
 - Use **Opção 2** para atualizar sem perder dados.
 - Opções 3 e 4 são para quem precisa compilar as imagens manualmente (desenvolvedores).
-- A opção 5 apaga tudo (containers, volumes, `.env`, código-clone). Faça backup antes!
+- A opção 5 apaga tudo (containers, volumes, `docker-compose.yml`, código-clone). Faça backup antes!
 
 ## 🔧 O que é instalado automaticamente
 
@@ -207,7 +210,7 @@ O instalador apresenta 5 opções no menu inicial:
 
 | Pacote         | Para que serve                             |
 | -------------- | ------------------------------------------- |
-| Docker         | Executar os containers do OPLANO            |
+| Docker         | Executar os containers do SolusChat         |
 | Docker Compose | Orquestrar os containers em conjunto        |
 | Node.js 20.x   | Obter a versão mais recente do WhatsApp Web |
 
@@ -224,7 +227,7 @@ As alterações são aplicadas apenas se ainda não existirem (sem duplicações
 | Serviço              | Imagem                                    | Função principal                                 |
 | -------------------- | ----------------------------------------- | ------------------------------------------------ |
 | Traefik              | `traefik:v2.11.7`                         | Proxy reverso com HTTPS automático               |
-| Backend              | `ghcr.io/<org>/<repo>/backend:${DOCKER_TAG}` | API OPLANO, migra DB, integra WhatsApp           |
+| Backend              | `ghcr.io/<org>/<repo>/backend:${DOCKER_TAG}` | API SolusChat, migra DB, integra WhatsApp        |
 | Frontend             | `ghcr.io/<org>/<repo>/frontend:${DOCKER_TAG}`| Interface web para usuários                      |
 | PostgreSQL           | `postgres:16.10`                          | Banco de dados principal                         |
 | PgBouncer            | `edoburu/pgbouncer`                       | Pool de conexões para o PostgreSQL               |
@@ -242,9 +245,9 @@ As alterações são aplicadas apenas se ainda não existirem (sem duplicações
 | `backend_private`     | Sessões WhatsApp e arquivos privados    |
 | `backend_public`      | Uploads públicos (imagens, anexos)      |
 
-### 5. Arquivos gerados em `/root/oplano`
+### 5. Arquivos gerados no diretório da aplicação
 
-- `.env`: todas as variáveis do sistema (guarde com segurança!).
+- `docker-compose.yml`: a stack completa com todos os valores literais, permissao `600` (guarde com segurança!).
 - `docker-compose.yml`: orquestra todos os serviços.
 - `config/pgbouncer/pgbouncer.ini` e `userlist.txt`.
 - `config/rabbitmq/rabbitmq.conf` (ajustes de usuário/senha).
@@ -261,7 +264,7 @@ O instalador gera, por padrão, credenciais seguras:
 | `REDIS_PASSWORD`     | Senha forte  | Autenticação no Redis                       |
 | `JWT_SECRET`         | Base64       | Autenticação de usuários                    |
 | `JWT_REFRESH_SECRET` | Base64       | Renovação de tokens                         |
-| `MASTER_KEY`         | String longa | Criptografia interna do OPLANO              |
+| `MASTER_KEY`         | String longa | Criptografia interna do SolusChat           |
 | `VERIFY_TOKEN`       | String       | Verificação de webhooks (Facebook)          |
 
 ### 7. Consumo estimado de recursos (carga moderada)
@@ -279,12 +282,12 @@ Recomenda-se manter pelo menos **4 GB de RAM livres** para picos e atualizaçõe
 
 ## 📝 Comandos úteis
 
-Todos os comandos abaixo devem ser executados em `/root/oplano`.
+Todos os comandos abaixo devem ser executados em `/root/soluschat`.
 
 ### 🔍 Status e monitoramento
 
 ```bash
-cd /root/oplano
+cd /root/soluschat
 docker compose ps             # Status dos serviços
 docker stats                  # Uso de CPU/RAM em tempo real
 docker ps                     # Containers rodando
@@ -315,18 +318,18 @@ docker compose down && docker compose up -d   # Recriar containers (mantém dado
 
 ```bash
 # Criar backup
-docker exec whaticket-postgres pg_dump -U $DB_USER $DB_NAME > backup_$(date +%Y%m%d_%H%M%S).sql
+docker exec soluschat-postgres pg_dump -U $DB_USER $DB_NAME > backup_$(date +%Y%m%d_%H%M%S).sql
 
 # Restaurar backup
-cat backup_20240101_120000.sql | docker exec -i whaticket-postgres psql -U $DB_USER -d $DB_NAME
+cat backup_20240101_120000.sql | docker exec -i soluschat-postgres psql -U $DB_USER -d $DB_NAME
 ```
 
 ### 🔐 Acessar shells dentro dos containers
 
 ```bash
 docker exec -it backend /bin/bash                                # Terminal do backend
-docker exec -it whaticket-postgres psql -U $DB_USER -d $DB_NAME   # Cliente psql
-docker exec -it whaticket-redis valkey-cli -a $REDIS_PASSWORD    # CLI do Redis
+docker exec -it soluschat-postgres psql -U $DB_USER -d $DB_NAME   # Cliente psql
+docker exec -it soluschat-redis valkey-cli -a $REDIS_PASSWORD    # CLI do Redis
 ```
 
 ### 🧹 Limpeza e manutenção
@@ -354,7 +357,7 @@ docker volume prune           # Remover volumes órfãos (cuidado!)
 4. Forçar novo certificado (armazenamento será recriado):
   ```bash
   docker compose stop traefik
-  docker volume rm oplano_traefik_letsencrypt
+  docker volume rm soluschat_traefik_letsencrypt
   docker compose up -d traefik
   ```
 
@@ -367,23 +370,23 @@ docker volume prune           # Remover volumes órfãos (cuidado!)
   ```
 2. Teste a conexão manualmente:
   ```bash
-  docker exec -it whaticket-postgres psql -U $DB_USER -d $DB_NAME
+  docker exec -it soluschat-postgres psql -U $DB_USER -d $DB_NAME
   ```
-3. Confira as credenciais em `/root/oplano/.env` (linhas `DB_*`).
+3. Confira as credenciais no `docker-compose.yml` da aplicação (linhas `DB_*` do serviço `backend`).
 4. Reinicie a cadeia banco → pool → backend:
   ```bash
-  docker compose restart whaticket-postgres whaticket-pgbouncer backend
+  docker compose restart soluschat-postgres soluschat-pgbouncer backend
   ```
 
 ### 3. WhatsApp não conecta ou QR code não aparece
 
-1. Cheque a versão `CLIENT_REVISION` no `.env`.
+1. Cheque a versão `CLIENT_REVISION` no `docker-compose.yml`.
 2. Atualize o instalador (opção 2) para forçar busca da versão mais recente.
 3. Se necessário, limpe sessões antigas (cuidado: desconecta tudo):
   ```bash
   docker compose stop backend
-  docker volume rm oplano_backend_private
-  docker volume create oplano_backend_private
+  docker volume rm soluschat_backend_private
+  docker volume create soluschat_backend_private
   docker compose up -d backend
   ```
 
@@ -417,7 +420,7 @@ docker volume prune           # Remover volumes órfãos (cuidado!)
 
 ## 🔒 Segurança e boas práticas
 
-1. **Proteja o arquivo `.env`** (`/root/oplano/.env`). Ele contém todas as senhas.
+1. **Proteja o `docker-compose.yml`** do diretório da aplicação. Ele contém todas as senhas e ja e criado com permissao `600`.
 2. **Implemente backups automáticos** (ex.: cron diário para `pg_dump`).
 3. **Atualize o sistema** regularmente (`apt update && apt upgrade`).
 4. **Restrinja o acesso SSH** (troque porta padrão, use chave em vez de senha).
@@ -436,6 +439,9 @@ docker volume prune           # Remover volumes órfãos (cuidado!)
 | 5672  | RabbitMQ               | Interna   |
 | 8080  | Backend (interno)      | Interna   |
 | 3000  | Frontend (interno)     | Interna   |
+| 7881  | WaCalls (mídia WebRTC, UDP) | Pública |
+
+A porta UDP do WaCalls precisa estar liberada no firewall e no painel do provedor. Sem ela a chamada conecta e fica muda: o sinal passa pelo backend, mas o áudio não.
 
 ## 💬 Suporte e próximos passos
 

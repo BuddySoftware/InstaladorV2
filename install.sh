@@ -2,11 +2,13 @@
 set -e
 
 # --- Global ---
-SCRIPT_VERSION="1.0.0"
-ENV_FILE=".env"
-APP_DIR="/root/oplano"
-DOCKER_COMPOSE_TEMPLATE_PATH="/root/instalador/docker-compose.yml"
-CONFIG_TEMPLATE_DIR="/root/instalador/config"
+SCRIPT_VERSION="2.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+APP_DIR="/root/soluschat"
+CONFIG_DIR="$APP_DIR/config"
+DOCKER_COMPOSE_TEMPLATE_PATH="${SCRIPT_DIR}/docker-compose.template.yml"
+CONFIG_TEMPLATE_DIR="${SCRIPT_DIR}/config"
 
 COLOR_RESET=$(tput sgr0)
 COLOR_RED=$(tput setaf 1)
@@ -33,11 +35,11 @@ check_interactive_terminal() {
 }
 
 generate_secure_password() {
-  tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-16}"
+  openssl rand -hex "${1:-16}"
 }
 
 generate_long_secure_string() {
-  tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-32}"
+  openssl rand -hex "${1:-32}"
 }
 
 # --- Checagem de comandos ---
@@ -128,11 +130,11 @@ optimize_system_performance() {
   
   # Backup dos arquivos apenas se for modificá-los
   if [ "$needs_limits_update" = true ]; then
-    [ -f /etc/security/limits.conf ] && sudo cp /etc/security/limits.conf /etc/security/limits.conf.bak.$(date +%Y%m%d-%H%M%S)
+    [ -f /etc/security/limits.conf ] && sudo cp /etc/security/limits.conf "/etc/security/limits.conf.bak.$(date +%Y%m%d-%H%M%S)"
   fi
   
   if [ "$needs_sysctl_update" = true ]; then
-    [ -f /etc/sysctl.conf ] && sudo cp /etc/sysctl.conf /etc/sysctl.conf.bak.$(date +%Y%m%d-%H%M%S)
+    [ -f /etc/sysctl.conf ] && sudo cp /etc/sysctl.conf "/etc/sysctl.conf.bak.$(date +%Y%m%d-%H%M%S)"
   fi
   
   # Configurar limites do sistema (ulimits)
@@ -266,11 +268,26 @@ EOF
   fi
 }
 
+install_gettext() {
+  if check_command envsubst; then
+    echo_success "envsubst ja instalado."
+    return 0
+  fi
+  echo_info "Instalando gettext-base (envsubst)..."
+  apt-get update -y >/dev/null 2>&1 || true
+  if apt-get install -y gettext-base; then
+    echo_success "gettext-base instalado."
+  else
+    echo_error "Falha ao instalar gettext-base. O instalador precisa do envsubst."
+  fi
+}
+
 check_and_install_dependencies() {
   echo_info "Verificando dependências..."
   install_docker
   install_docker_compose
   install_nodejs
+  install_gettext
   
   # Aplicar otimizações do sistema após instalar dependências
   echo ""
@@ -284,7 +301,7 @@ check_and_install_dependencies() {
 # --- Coleta de dados ---
 get_environment_tag() {
   echo_info "Selecione o ambiente para as imagens Docker (para operações GHCR):"
-  options=("Produção (tag: latest)" "Desenvolvimento (tag: develop)")
+  options=("Produção (tag: latest)" "Staging (tag: beta)")
   select opt in "${options[@]}"; do
     case $opt in
     "Produção (tag: latest)")
@@ -292,9 +309,9 @@ get_environment_tag() {
       NODE_ENV="production"
       break
       ;;
-    "Desenvolvimento (tag: develop)")
-      DOCKER_TAG="develop"
-      NODE_ENV="development"
+    "Staging (tag: beta)")
+      DOCKER_TAG="beta"
+      NODE_ENV="production"
       break
       ;;
     *) echo_warning "Opção inválida: $REPLY. Tente novamente." ;;
@@ -305,8 +322,8 @@ get_environment_tag() {
 
 collect_ghcr_image_details() {
   echo_info "Configuração das Imagens Docker do GHCR:"
-  prompt_for_variable "GHCR_IMAGE_USER" "  Usuário/Organização do GitHub para as imagens" "${GHCR_IMAGE_USER_CURRENT}" "oplanov2-entrega" "oplanov2-entrega"
-  prompt_for_variable "GHCR_IMAGE_REPO" "  Nome do Repositório no GitHub para as imagens" "${GHCR_IMAGE_REPO_CURRENT}" "entrega-oplanov2" "entrega-oplanov2"
+  prompt_for_variable "GHCR_IMAGE_USER" "  Usuário/Organização do GitHub para as imagens" "${GHCR_IMAGE_USER_CURRENT}" "BuddySoftware" "BuddySoftware"
+  prompt_for_variable "GHCR_IMAGE_REPO" "  Nome do Repositório no GitHub para as imagens" "${GHCR_IMAGE_REPO_CURRENT}" "soluschat-V2" "soluschat-V2"
 }
 
 collect_traefik_email() {
@@ -328,6 +345,15 @@ validate_port() {
   fi
   return 1
 }
+validate_secret() {
+  local value="$1"
+  if [[ "$value" =~ [\"\\\$\`[:space:]] ]]; then
+    echo_warning "  Use apenas caracteres sem aspas, barra invertida, cifrão, crase ou espaço."
+    return 1
+  fi
+  return 0
+}
+
 validate_email() {
   local email="$1"
   if [[ "$email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
@@ -355,7 +381,7 @@ prompt_for_variable() {
       read -r -p "$prompt_text${example:+ | Ex: $example}: " new_value
     fi
     if [ -z "$validator" ] || [ -z "$new_value" ] || $validator "$new_value"; then
-      eval "$var_name=\"$new_value\""
+      printf -v "$var_name" "%s" "$new_value"
       break
     else
       echo_warning "Valor inválido. Tente novamente."
@@ -408,18 +434,25 @@ collect_gerencianet_credentials() {
 
 collect_other_configs() {
   echo_info "Outras Configurações:"
-  prompt_for_variable "MASTER_KEY" "  MASTER_KEY (Chave mestra para criptografia interna, essencial e única por instalação)" "${MASTER_KEY_CURRENT}"
+  prompt_for_variable "MASTER_KEY" "  MASTER_KEY (Chave mestra para criptografia interna, essencial e única por instalação)" "${MASTER_KEY_CURRENT}" validate_secret
   if [ -z "$MASTER_KEY" ]; then
     echo_warning "MASTER_KEY não foi definida. É altamente recomendável definir uma."
     read -r -p "Pressione Enter para gerar uma MASTER_KEY automaticamente ou digite uma agora: " user_master_key_input
     if [ -z "$user_master_key_input" ]; then
-      MASTER_KEY=$(generate_long_secure_string 16)
+      MASTER_KEY=$(generate_long_secure_string 32)
       echo_info "MASTER_KEY gerada automaticamente: $MASTER_KEY"
     else
       MASTER_KEY=$user_master_key_input
     fi
   fi
   prompt_for_variable "NUMBER_SUPPORT" "  Número de Suporte (para frontend)" "${NUMBER_SUPPORT_CURRENT}"
+  local detected_ip
+  detected_ip=$(curl -s --max-time 8 https://api.ipify.org)
+  [[ "$detected_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || detected_ip=""
+  prompt_for_variable "WACALLS_PUBLIC_IP" "  IP publico para midia WebRTC" \
+    "${WACALLS_PUBLIC_IP_CURRENT}" "$detected_ip" "203.0.113.10"
+  prompt_for_variable "WACALLS_WEBRTC_UDP_PORT" "  Porta UDP fixa para midia WebRTC" \
+    "${WACALLS_WEBRTC_UDP_PORT_CURRENT}" "7881" "7881"
 }
 
 # --- Geração de credenciais ---
@@ -444,14 +477,14 @@ set_credentials_mode() {
 set_database_credentials() {
   echo_info "Configurando Credenciais do Banco de Dados (PostgreSQL):"
   if [ "$CREDENTIAL_MODE" == "auto" ]; then
-    DB_NAME="oplano_$(generate_secure_password 8)"
-    DB_USER="oplano_$(generate_secure_password 8)"
+    DB_NAME="soluschat_$(generate_secure_password 8)"
+    DB_USER="soluschat_$(generate_secure_password 8)"
     DB_PASS="$(generate_secure_password 24)"
     echo_info "  Credenciais do Banco de Dados geradas automaticamente."
   else
-    prompt_for_variable "DB_NAME" "  Nome do Banco de Dados (DB_NAME)" "${DB_NAME_CURRENT:-oplano}"
-    prompt_for_variable "DB_USER" "  Usuário do Banco de Dados (DB_USER)" "${DB_USER_CURRENT:-oplano}"
-    prompt_for_variable "DB_PASS" "  Senha do Banco de Dados (DB_PASS)"
+    prompt_for_variable "DB_NAME" "  Nome do Banco de Dados (DB_NAME)" "${DB_NAME_CURRENT:-soluschat}"
+    prompt_for_variable "DB_USER" "  Usuário do Banco de Dados (DB_USER)" "${DB_USER_CURRENT:-soluschat}"
+    prompt_for_variable "DB_PASS" "  Senha do Banco de Dados (DB_PASS)" "" "" "" validate_secret
   fi
 }
 
@@ -462,8 +495,8 @@ set_rabbitmq_credentials() {
     RABBIT_PASS="$(generate_secure_password 24)"
     echo_info "  Credenciais do RabbitMQ geradas automaticamente."
   else
-    prompt_for_variable "RABBIT_USER" "  Usuário do RabbitMQ (RABBIT_USER)" "${RABBIT_USER_CURRENT:-oplano}"
-    prompt_for_variable "RABBIT_PASS" "  Senha do RabbitMQ (RABBIT_PASS)"
+    prompt_for_variable "RABBIT_USER" "  Usuário do RabbitMQ (RABBIT_USER)" "${RABBIT_USER_CURRENT:-soluschat}"
+    prompt_for_variable "RABBIT_PASS" "  Senha do RabbitMQ (RABBIT_PASS)" "" "" "" validate_secret
   fi
 }
 
@@ -474,7 +507,7 @@ set_redis_credentials() {
     echo_info "  Senha do Redis gerada automaticamente."
   else
     while true; do
-      prompt_for_variable "REDIS_PASSWORD" "  Senha do Redis (REDIS_PASSWORD)" "${REDIS_PASSWORD_CURRENT}"
+      prompt_for_variable "REDIS_PASSWORD" "  Senha do Redis (REDIS_PASSWORD)" "${REDIS_PASSWORD_CURRENT}" "" "" validate_secret
       if [ -n "$REDIS_PASSWORD" ]; then
         break
       fi
@@ -490,127 +523,150 @@ generate_internal_secrets() {
   JWT_REFRESH_SECRET="${JWT_REFRESH_SECRET_CURRENT:-$(openssl rand -base64 44)}"
   COMPANY_TOKEN="${COMPANY_TOKEN_CURRENT:-$(generate_long_secure_string 16)}"
   REDIS_PASSWORD="${REDIS_PASSWORD:-${REDIS_PASSWORD_CURRENT:-$(generate_secure_password 24)}}"
+  MASTER_KEY="${MASTER_KEY:-${MASTER_KEY_CURRENT:-$(generate_long_secure_string 32)}}"
+  VERIFY_TOKEN="${VERIFY_TOKEN:-${VERIFY_TOKEN_CURRENT:-$(generate_long_secure_string 32)}}"
+  ENV_TOKEN="${ENV_TOKEN_CURRENT:-$(generate_long_secure_string 32)}"
+  WACALLS_SERVICE_TOKEN="${WACALLS_SERVICE_TOKEN_CURRENT:-$(generate_long_secure_string 64)}"
+  MASTER_SETTINGS_ENCRYPTION_KEY="${MASTER_SETTINGS_ENCRYPTION_KEY_CURRENT:-$(openssl rand -base64 32)}"
 }
 
-load_env_file() {
-  if [ -f "$APP_DIR/$ENV_FILE" ]; then
-    echo_info "Carregando configurações existentes de '$APP_DIR/$ENV_FILE'..."
-    set -o allexport
-    # shellcheck source=/dev/null
-    source "$APP_DIR/$ENV_FILE"
-    set +o allexport
+compose_env_value() {
+  grep -oP "(?<=^      - \"$1=)[^\"]*" "$APP_DIR/docker-compose.yml" | head -1 || true
+}
 
-    # Carrega todas as variáveis existentes
-    FRONTEND_DOMAIN_CURRENT="$FRONTEND_DOMAIN"
-    BACKEND_DOMAIN_CURRENT="$BACKEND_DOMAIN"
-    EMAIL_CURRENT="$EMAIL"
-    FACEBOOK_APP_ID_CURRENT="$FACEBOOK_APP_ID"
-    FACEBOOK_APP_SECRET_CURRENT="$FACEBOOK_APP_SECRET"
-    VERIFY_TOKEN_CURRENT="$VERIFY_TOKEN"
-    GERENCIANET_SANDBOX_CURRENT="$GERENCIANET_SANDBOX"
-    GERENCIANET_CLIENT_ID_CURRENT="$GERENCIANET_CLIENT_ID"
-    GERENCIANET_CLIENT_SECRET_CURRENT="$GERENCIANET_CLIENT_SECRET"
-    GERENCIANET_CHAVEPIX_CURRENT="$GERENCIANET_CHAVEPIX"
-    GERENCIANET_PIX_CERT_CURRENT="$GERENCIANET_PIX_CERT"
-    DB_NAME_CURRENT="$DB_NAME"
-    DB_USER_CURRENT="$DB_USER"
-    DB_PASS_CURRENT="$DB_PASS"
-    RABBIT_USER_CURRENT="$RABBIT_USER"
-    RABBIT_PASS_CURRENT="$RABBIT_PASS"
-  REDIS_PASSWORD_CURRENT="$REDIS_PASSWORD"
-    DOCKER_TAG_CURRENT="$DOCKER_TAG"
-    GHCR_IMAGE_USER_CURRENT="$GHCR_IMAGE_USER"
-    GHCR_IMAGE_REPO_CURRENT="$GHCR_IMAGE_REPO"
-    NODE_ENV_CURRENT="$NODE_ENV"
-    JWT_SECRET_CURRENT="$JWT_SECRET"
-    JWT_REFRESH_SECRET_CURRENT="$JWT_REFRESH_SECRET"
-    COMPANY_TOKEN_CURRENT="$COMPANY_TOKEN"
-    MASTER_KEY_CURRENT="$MASTER_KEY"
-    NUMBER_SUPPORT_CURRENT="$NUMBER_SUPPORT"
-    REQUIRE_BUSINESS_MANAGEMENT_CURRENT="$REQUIRE_BUSINESS_MANAGEMENT"
+read_current_values() {
+  local compose="$APP_DIR/docker-compose.yml"
 
-    echo_success "Configurações carregadas de '$APP_DIR/$ENV_FILE'."
-    return 0
-  else
-    echo_warning "Arquivo '$APP_DIR/$ENV_FILE' não encontrado. Assumindo nova instalação."
+  if [ ! -f "$compose" ]; then
+    echo_warning "Nenhum compose em '$compose'. Assumindo nova instalação."
     return 1
   fi
+  echo_info "Carregando configurações existentes de '$compose'..."
+
+  EMAIL_CURRENT=$(grep -oP '(?<=acme\.email=)[^"]+' "$compose" | head -1 || true)
+  FRONTEND_DOMAIN_CURRENT=$(compose_env_value FRONTEND_URL | sed 's|^https://||')
+  BACKEND_DOMAIN_CURRENT=$(compose_env_value BACKEND_URL | sed 's|^https://||')
+
+  local backend_image
+  backend_image=$(grep -oP '(?<=^    image: )ghcr\.io/\S+/backend:\S+' "$compose" | head -1 || true)
+  if [ -n "$backend_image" ]; then
+    GHCR_IMAGE_USER_CURRENT=$(echo "$backend_image" | cut -d/ -f2)
+    GHCR_IMAGE_REPO_CURRENT=$(echo "$backend_image" | cut -d/ -f3)
+    DOCKER_TAG_CURRENT=${backend_image##*:}
+  fi
+
+  NODE_ENV_CURRENT=$(compose_env_value NODE_ENV)
+  DB_NAME_CURRENT=$(compose_env_value DB_NAME)
+  DB_USER_CURRENT=$(compose_env_value DB_USER)
+  DB_PASS_CURRENT=$(compose_env_value DB_PASS)
+  JWT_SECRET_CURRENT=$(compose_env_value JWT_SECRET)
+  JWT_REFRESH_SECRET_CURRENT=$(compose_env_value JWT_REFRESH_SECRET)
+  COMPANY_TOKEN_CURRENT=$(compose_env_value COMPANY_TOKEN)
+  ENV_TOKEN_CURRENT=$(compose_env_value ENV_TOKEN)
+  MASTER_KEY_CURRENT=$(compose_env_value MASTER_KEY)
+  MASTER_SETTINGS_ENCRYPTION_KEY_CURRENT=$(compose_env_value MASTER_SETTINGS_ENCRYPTION_KEY)
+  VERIFY_TOKEN_CURRENT=$(compose_env_value VERIFY_TOKEN)
+  FACEBOOK_APP_ID_CURRENT=$(compose_env_value FACEBOOK_APP_ID)
+  FACEBOOK_APP_SECRET_CURRENT=$(compose_env_value FACEBOOK_APP_SECRET)
+  UAZAPI_BASE_URL_CURRENT=$(compose_env_value UAZAPI_BASE_URL)
+  UAZAPI_ADMIN_TOKEN_CURRENT=$(compose_env_value UAZAPI_ADMIN_TOKEN)
+  GERENCIANET_SANDBOX_CURRENT=$(compose_env_value GERENCIANET_SANDBOX)
+  GERENCIANET_CLIENT_ID_CURRENT=$(compose_env_value GERENCIANET_CLIENT_ID)
+  GERENCIANET_CLIENT_SECRET_CURRENT=$(compose_env_value GERENCIANET_CLIENT_SECRET)
+  GERENCIANET_CHAVEPIX_CURRENT=$(compose_env_value GERENCIANET_CHAVEPIX)
+  GERENCIANET_PIX_CERT_CURRENT=$(compose_env_value GERENCIANET_PIX_CERT)
+  REDIS_PASSWORD_CURRENT=$(compose_env_value REDIS_PASSWORD)
+  RABBIT_USER_CURRENT=$(compose_env_value RABBITMQ_DEFAULT_USER)
+  RABBIT_PASS_CURRENT=$(compose_env_value RABBITMQ_DEFAULT_PASS)
+  NUMBER_SUPPORT_CURRENT=$(compose_env_value REACT_APP_NUMBER_SUPPORT)
+  REQUIRE_BUSINESS_MANAGEMENT_CURRENT=$(compose_env_value REACT_APP_REQUIRE_BUSINESS_MANAGEMENT)
+  WACALLS_SERVICE_TOKEN_CURRENT=$(compose_env_value WACALLS_SERVICE_TOKEN)
+  WACALLS_PUBLIC_IP_CURRENT=$(compose_env_value WACALLS_PUBLIC_IP)
+  WACALLS_WEBRTC_UDP_PORT_CURRENT=$(compose_env_value WACALLS_WEBRTC_UDP_PORT)
+
+  echo_success "Configurações carregadas de '$compose'."
+  return 0
 }
 
-save_env_file() {
-  echo_info "Salvando configurações em '$APP_DIR/$ENV_FILE'..."
+apply_current_values() {
+  if [ -z "${EMAIL+definida}" ]; then EMAIL="${EMAIL_CURRENT:-}"; fi
+  if [ -z "${NODE_ENV+definida}" ]; then NODE_ENV="${NODE_ENV_CURRENT:-}"; fi
+  if [ -z "${DOCKER_TAG+definida}" ]; then DOCKER_TAG="${DOCKER_TAG_CURRENT:-}"; fi
+  if [ -z "${GHCR_IMAGE_USER+definida}" ]; then GHCR_IMAGE_USER="${GHCR_IMAGE_USER_CURRENT:-}"; fi
+  if [ -z "${GHCR_IMAGE_REPO+definida}" ]; then GHCR_IMAGE_REPO="${GHCR_IMAGE_REPO_CURRENT:-}"; fi
+  if [ -z "${FRONTEND_DOMAIN+definida}" ]; then FRONTEND_DOMAIN="${FRONTEND_DOMAIN_CURRENT:-}"; fi
+  if [ -z "${BACKEND_DOMAIN+definida}" ]; then BACKEND_DOMAIN="${BACKEND_DOMAIN_CURRENT:-}"; fi
+  if [ -z "${DB_NAME+definida}" ]; then DB_NAME="${DB_NAME_CURRENT:-}"; fi
+  if [ -z "${DB_USER+definida}" ]; then DB_USER="${DB_USER_CURRENT:-}"; fi
+  if [ -z "${DB_PASS+definida}" ]; then DB_PASS="${DB_PASS_CURRENT:-}"; fi
+  if [ -z "${RABBIT_USER+definida}" ]; then RABBIT_USER="${RABBIT_USER_CURRENT:-}"; fi
+  if [ -z "${RABBIT_PASS+definida}" ]; then RABBIT_PASS="${RABBIT_PASS_CURRENT:-}"; fi
+  if [ -z "${REDIS_PASSWORD+definida}" ]; then REDIS_PASSWORD="${REDIS_PASSWORD_CURRENT:-}"; fi
+  if [ -z "${JWT_SECRET+definida}" ]; then JWT_SECRET="${JWT_SECRET_CURRENT:-}"; fi
+  if [ -z "${JWT_REFRESH_SECRET+definida}" ]; then JWT_REFRESH_SECRET="${JWT_REFRESH_SECRET_CURRENT:-}"; fi
+  if [ -z "${VERIFY_TOKEN+definida}" ]; then VERIFY_TOKEN="${VERIFY_TOKEN_CURRENT:-}"; fi
+  if [ -z "${ENV_TOKEN+definida}" ]; then ENV_TOKEN="${ENV_TOKEN_CURRENT:-}"; fi
+  if [ -z "${COMPANY_TOKEN+definida}" ]; then COMPANY_TOKEN="${COMPANY_TOKEN_CURRENT:-}"; fi
+  if [ -z "${MASTER_KEY+definida}" ]; then MASTER_KEY="${MASTER_KEY_CURRENT:-}"; fi
+  if [ -z "${MASTER_SETTINGS_ENCRYPTION_KEY+definida}" ]; then MASTER_SETTINGS_ENCRYPTION_KEY="${MASTER_SETTINGS_ENCRYPTION_KEY_CURRENT:-}"; fi
+  if [ -z "${WACALLS_SERVICE_TOKEN+definida}" ]; then WACALLS_SERVICE_TOKEN="${WACALLS_SERVICE_TOKEN_CURRENT:-}"; fi
+  if [ -z "${WACALLS_PUBLIC_IP+definida}" ]; then WACALLS_PUBLIC_IP="${WACALLS_PUBLIC_IP_CURRENT:-}"; fi
+  if [ -z "${WACALLS_WEBRTC_UDP_PORT+definida}" ]; then WACALLS_WEBRTC_UDP_PORT="${WACALLS_WEBRTC_UDP_PORT_CURRENT:-}"; fi
+  if [ -z "${NUMBER_SUPPORT+definida}" ]; then NUMBER_SUPPORT="${NUMBER_SUPPORT_CURRENT:-}"; fi
+  if [ -z "${REQUIRE_BUSINESS_MANAGEMENT+definida}" ]; then REQUIRE_BUSINESS_MANAGEMENT="${REQUIRE_BUSINESS_MANAGEMENT_CURRENT:-}"; fi
+  if [ -z "${FACEBOOK_APP_ID+definida}" ]; then FACEBOOK_APP_ID="${FACEBOOK_APP_ID_CURRENT:-}"; fi
+  if [ -z "${FACEBOOK_APP_SECRET+definida}" ]; then FACEBOOK_APP_SECRET="${FACEBOOK_APP_SECRET_CURRENT:-}"; fi
+  if [ -z "${UAZAPI_BASE_URL+definida}" ]; then UAZAPI_BASE_URL="${UAZAPI_BASE_URL_CURRENT:-}"; fi
+  if [ -z "${UAZAPI_ADMIN_TOKEN+definida}" ]; then UAZAPI_ADMIN_TOKEN="${UAZAPI_ADMIN_TOKEN_CURRENT:-}"; fi
+  if [ -z "${GERENCIANET_SANDBOX+definida}" ]; then GERENCIANET_SANDBOX="${GERENCIANET_SANDBOX_CURRENT:-}"; fi
+  if [ -z "${GERENCIANET_CLIENT_ID+definida}" ]; then GERENCIANET_CLIENT_ID="${GERENCIANET_CLIENT_ID_CURRENT:-}"; fi
+  if [ -z "${GERENCIANET_CLIENT_SECRET+definida}" ]; then GERENCIANET_CLIENT_SECRET="${GERENCIANET_CLIENT_SECRET_CURRENT:-}"; fi
+  if [ -z "${GERENCIANET_CHAVEPIX+definida}" ]; then GERENCIANET_CHAVEPIX="${GERENCIANET_CHAVEPIX_CURRENT:-}"; fi
+  if [ -z "${GERENCIANET_PIX_CERT+definida}" ]; then GERENCIANET_PIX_CERT="${GERENCIANET_PIX_CERT_CURRENT:-}"; fi
+}
+
+render_compose() {
   mkdir -p "$APP_DIR"
 
-  cat >"$APP_DIR/$ENV_FILE" <<EOF
-# Versão do Script: $SCRIPT_VERSION
-# Data: $(date)
+  GHCR_IMAGE_USER="${GHCR_IMAGE_USER,,}"
+  GHCR_IMAGE_REPO="${GHCR_IMAGE_REPO,,}"
 
-# --- Ambiente ---
-NODE_ENV=${NODE_ENV:-production}
-DOCKER_TAG=${DOCKER_TAG:-latest}
-EMAIL=${EMAIL:-seu@email.com}
+  FRONTEND_URL="https://${FRONTEND_DOMAIN}"
+  BACKEND_URL="https://${BACKEND_DOMAIN}"
+  RABBITMQ_URI="amqp://${RABBIT_USER}:${RABBIT_PASS}@soluschat-rabbitmq:5672/"
+  REDIS_URI="redis://:${REDIS_PASSWORD}@soluschat-redis:6379"
+  WACALLS_DSN="postgres://${DB_USER}:${DB_PASS}@soluschat-postgres:5432/${DB_NAME}?sslmode=disable&search_path=wacalls"
 
-# --- Detalhes Imagem GHCR ---
-GHCR_IMAGE_USER=${GHCR_IMAGE_USER:-oplanov2-entrega}
-GHCR_IMAGE_REPO=${GHCR_IMAGE_REPO:-entrega-oplanov2}
+  export APP_DIR DOCKER_TAG NODE_ENV EMAIL \
+    GHCR_IMAGE_USER GHCR_IMAGE_REPO FRONTEND_DOMAIN BACKEND_DOMAIN \
+    FRONTEND_URL BACKEND_URL DB_NAME DB_USER DB_PASS \
+    RABBIT_USER RABBIT_PASS RABBITMQ_URI REDIS_PASSWORD REDIS_URI \
+    JWT_SECRET JWT_REFRESH_SECRET VERIFY_TOKEN ENV_TOKEN COMPANY_TOKEN \
+    MASTER_KEY MASTER_SETTINGS_ENCRYPTION_KEY \
+    WACALLS_SERVICE_TOKEN WACALLS_DSN WACALLS_PUBLIC_IP WACALLS_WEBRTC_UDP_PORT \
+    NUMBER_SUPPORT REQUIRE_BUSINESS_MANAGEMENT \
+    FACEBOOK_APP_ID FACEBOOK_APP_SECRET \
+    GERENCIANET_SANDBOX GERENCIANET_CLIENT_ID GERENCIANET_CLIENT_SECRET \
+    GERENCIANET_CHAVEPIX GERENCIANET_PIX_CERT \
+    UAZAPI_BASE_URL UAZAPI_ADMIN_TOKEN
 
-# --- Domínios ---
-FRONTEND_DOMAIN=${FRONTEND_DOMAIN}
-BACKEND_DOMAIN=${BACKEND_DOMAIN}
-FRONTEND_URL=https://${FRONTEND_DOMAIN}
-BACKEND_URL=https://${BACKEND_DOMAIN}
+  local out="$APP_DIR/docker-compose.yml"
+  local tmp="$out.novo"
+  : >"$tmp"
+  chmod 600 "$tmp"
+  envsubst <"$DOCKER_COMPOSE_TEMPLATE_PATH" >"$tmp"
 
-# --- Banco de Dados (PostgreSQL) ---
-DB_DIALECT=postgres
-DB_HOST=whaticket-pgbouncer
-DB_PORT=6432
-DB_HOST_DIRECT=whaticket-postgres
-DB_PORT_DIRECT=5432
-DB_NAME=${DB_NAME}
-DB_USER=${DB_USER}
-DB_PASS=${DB_PASS}
+  if [ "$OPERATION_TYPE" = "local_build" ]; then
+    sed -i -E \
+      -e "s|^(    image: )ghcr\.io/[^/]+/[^/]+/([a-z]+):.*|\1soluschat/\2:${DOCKER_TAG}|" \
+      -e "s|^(    pull_policy: )always$|\1never|" \
+      "$tmp"
+  fi
 
-# --- RabbitMQ ---
-RABBITMQ_HOST=whaticket-rabbitmq
-RABBITMQ_PORT=5672
-RABBIT_USER=${RABBIT_USER}
-RABBIT_PASS=${RABBIT_PASS}
-RABBITMQ_URI=amqp://\${RABBIT_USER}:\${RABBIT_PASS}@whaticket-rabbitmq:5672/
+  [ -f "$out" ] && cp -p "$out" "$out.bak"
+  mv "$tmp" "$out"
 
-# --- Redis ---
-REDIS_HOST=whaticket-redis
-REDIS_PORT=6379
-REDIS_PASSWORD=${REDIS_PASSWORD}
-REDIS_URI=redis://:\${REDIS_PASSWORD}@whaticket-redis:6379
-
-# --- Autenticação e Chaves ---
-JWT_SECRET=${JWT_SECRET}
-JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-VERIFY_TOKEN=${VERIFY_TOKEN}
-ENV_TOKEN=OPLANOV2
-COMPANY_TOKEN=${COMPANY_TOKEN}
-MASTER_KEY=${MASTER_KEY}
-
-# --- WhatsApp Client Revision ---
-
-# --- Facebook (Opcional) ---
-FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
-FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
-REQUIRE_BUSINESS_MANAGEMENT=${REQUIRE_BUSINESS_MANAGEMENT}
-
-# --- Gerencianet (Opcional) ---
-GERENCIANET_SANDBOX=${GERENCIANET_SANDBOX}
-GERENCIANET_CLIENT_ID=${GERENCIANET_CLIENT_ID}
-GERENCIANET_CLIENT_SECRET=${GERENCIANET_CLIENT_SECRET}
-GERENCIANET_CHAVEPIX=${GERENCIANET_CHAVEPIX}
-GERENCIANET_PIX_CERT=${GERENCIANET_PIX_CERT}
-
-# --- Outras ---
-PROXY_PORT=443
-TIMEOUT_TO_IMPORT_MESSAGE=100
-NUMBER_SUPPORT=${NUMBER_SUPPORT}
-EOF
-  echo_success "Configurações salvas em '$APP_DIR/$ENV_FILE'."
+  echo_success "Compose renderizado em $out"
 }
 
 docker_login() {
@@ -639,54 +695,6 @@ docker_login() {
   else
     echo_error "Falha no login do GHCR. Verifique o usuário, token e sua conexão com a internet."
   fi
-}
-
-adjust_docker_compose_images() {
-  local target_compose_file="$APP_DIR/docker-compose.yml"
-  if [ ! -f "$target_compose_file" ]; then
-    echo_error "Arquivo docker-compose.yml não encontrado em $target_compose_file para ajuste."
-    return 1
-  fi
-
-  echo_info "Ajustando nomes das imagens no docker-compose.yml..."
-
-  if [ "$OPERATION_TYPE" == "ghcr" ]; then
-    if [ -z "$GHCR_IMAGE_USER" ] || [ -z "$GHCR_IMAGE_REPO" ]; then
-      echo_error "GHCR_IMAGE_USER ou GHCR_IMAGE_REPO não definidos. Não é possível ajustar o docker-compose.yml."
-      return 1
-    fi
-    sed -i.bak \
-      -e "s|ghcr.io/seu-usuario/seu-repositorio/backend|ghcr.io/${GHCR_IMAGE_USER}/${GHCR_IMAGE_REPO}/backend|g" \
-      -e "s|ghcr.io/seu-usuario/seu-repositorio/frontend|ghcr.io/${GHCR_IMAGE_USER}/${GHCR_IMAGE_REPO}/frontend|g" \
-      "$target_compose_file"
-    echo_success "docker-compose.yml ajustado para usar imagens GHCR: ghcr.io/${GHCR_IMAGE_USER}/${GHCR_IMAGE_REPO}/<servico>:\${DOCKER_TAG}"
-  elif [ "$OPERATION_TYPE" == "local_build" ]; then
-    sed -i.bak \
-      -e "s|image: ghcr.io/seu-usuario/seu-repositorio/backend:\${DOCKER_TAG}|image: oplano/backend:${DOCKER_TAG}|g" \
-      -e "s|image: ghcr.io/seu-usuario/seu-repositorio/frontend:\${DOCKER_TAG}|image: oplano/frontend:${DOCKER_TAG}|g" \
-      "$target_compose_file"
-    echo_success "docker-compose.yml ajustado para usar imagens locais: oplano/<servico>:${DOCKER_TAG}"
-  fi
-  rm -f "${target_compose_file}.bak"
-}
-
-copy_docker_compose_template_and_adjust() {
-  echo_info "Copiando template docker-compose.yml..."
-
-  # Verifica se o template existe
-  if [ ! -f "$DOCKER_COMPOSE_TEMPLATE_PATH" ]; then
-    echo_error "Arquivo template docker-compose.yml não encontrado em $DOCKER_COMPOSE_TEMPLATE_PATH."
-  fi
-
-  # Garante que o diretório de destino existe
-  mkdir -p "$APP_DIR"
-
-  # Copia o template
-  cp -f "$DOCKER_COMPOSE_TEMPLATE_PATH" "$APP_DIR/docker-compose.yml"
-  echo_success "Template docker-compose.yml copiado para $APP_DIR/docker-compose.yml"
-
-  # Ajusta as imagens
-  adjust_docker_compose_images
 }
 
 sync_config_templates() {
@@ -741,12 +749,12 @@ generate_pgbouncer_config() {
   cat >"$pgbouncer_dir/pgbouncer.ini" <<'PGBOUNCER_INI'
 [databases]
 ;; Aliases for your databases
-* = host=whaticket-postgres port=5432
+* = host=soluschat-postgres port=5432
 
 [pgbouncer]
 listen_addr = 0.0.0.0
 listen_port = 6432
-auth_type = md5
+auth_type = scram-sha-256
 auth_file = /etc/pgbouncer/userlist.txt
 
 ;; Pool settings optimized for OnTicket
@@ -781,6 +789,8 @@ PGBOUNCER_INI
   cat >"$pgbouncer_dir/userlist.txt" <<EOF
 "${DB_USER}" "${DB_PASS}"
 EOF
+  chown 70:70 "$pgbouncer_dir/userlist.txt" 2>/dev/null || true
+  chmod 600 "$pgbouncer_dir/userlist.txt"
 
   echo_success "Arquivos de configuração do PgBouncer gerados:"
   echo_info "  - $pgbouncer_dir/pgbouncer.ini"
@@ -796,15 +806,34 @@ docker_compose_pull() {
     echo_error "Arquivo docker-compose.yml não encontrado em $APP_DIR"
   fi
 
-  # Verifica se o arquivo .env existe
-  if [ ! -f ".env" ]; then
-    echo_error "Arquivo .env não encontrado em $APP_DIR"
-  fi
-
   if docker compose pull; then
     echo_success "Imagens Docker atualizadas."
   else
     echo_error "Falha ao atualizar imagens Docker. Verifique se você está logado no GHCR se estiver usando imagens de lá."
+  fi
+}
+
+ensure_wacalls_schema() {
+  local pg="soluschat-postgres"
+  echo_info "Garantindo o schema 'wacalls' no banco..."
+  docker compose up -d "$pg"
+
+  local attempt
+  for attempt in $(seq 1 30); do
+    if docker compose exec -T "$pg" pg_isready -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; then
+      break
+    fi
+    if [ "$attempt" -eq 30 ]; then
+      echo_error "PostgreSQL não respondeu em 60s. Não foi possível criar o schema 'wacalls'."
+    fi
+    sleep 2
+  done
+
+  if docker compose exec -T "$pg" psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" \
+    -c "CREATE SCHEMA IF NOT EXISTS wacalls AUTHORIZATION \"$DB_USER\"" >/dev/null; then
+    echo_success "Schema 'wacalls' disponível."
+  else
+    echo_error "Falha ao criar o schema 'wacalls'. O serviço de voz não sobe sem ele."
   fi
 }
 
@@ -817,18 +846,9 @@ docker_compose_up() {
     echo_error "Arquivo docker-compose.yml não encontrado em $APP_DIR"
   fi
 
-  # Verifica se o arquivo .env existe
-  if [ ! -f ".env" ]; then
-    echo_error "Arquivo .env não encontrado em $APP_DIR"
-  fi
-
   echo_info "Executando docker compose a partir de: $(pwd)"
-  echo_info "Usando arquivo .env de: $APP_DIR/.env"
 
-  # Garante que as variáveis de ambiente sejam carregadas
-  set -o allexport
-  source "$APP_DIR/$ENV_FILE"
-  set +o allexport
+  ensure_wacalls_schema
 
   if docker compose up -d --remove-orphans; then
     echo_success "Serviços Docker iniciados/reiniciados com sucesso."
@@ -899,8 +919,8 @@ collect_all_data_new_install() {
 
 collect_data_update_simplified() {
   echo_info "Carregando configurações existentes para atualização..."
-  if ! load_env_file; then
-    echo_warning "Nenhum arquivo '$APP_DIR/$ENV_FILE' encontrado. Não é possível atualizar."
+  if ! read_current_values; then
+    echo_warning "Nenhum compose em '$APP_DIR/docker-compose.yml'. Não é possível atualizar."
     read -r -p "Deseja prosseguir com uma Nova Instalação? (s/N): " choice
     if [[ "$choice" == "s" || "$choice" == "S" ]]; then
       if [ "$OPERATION_TYPE" == "ghcr" ]; then
@@ -931,8 +951,8 @@ collect_data_update_simplified() {
     fi
     
     # Owner/Organização e Repositório
-    prompt_for_variable "GHCR_IMAGE_USER" "  Usuário/Organização do GitHub para as imagens" "${GHCR_IMAGE_USER_CURRENT}" "oplanov2-entrega" "oplanov2-entrega"
-    prompt_for_variable "GHCR_IMAGE_REPO" "  Nome do Repositório no GitHub para as imagens" "${GHCR_IMAGE_REPO_CURRENT}" "entrega-oplanov2" "entrega-oplanov2"
+    prompt_for_variable "GHCR_IMAGE_USER" "  Usuário/Organização do GitHub para as imagens" "${GHCR_IMAGE_USER_CURRENT}" "BuddySoftware" "BuddySoftware"
+    prompt_for_variable "GHCR_IMAGE_REPO" "  Nome do Repositório no GitHub para as imagens" "${GHCR_IMAGE_REPO_CURRENT}" "soluschat-V2" "soluschat-V2"
     
   else
     echo_info "Configuração do Repositório Git para Build Local:"
@@ -956,14 +976,14 @@ collect_data_update_simplified() {
     echo_info "Credenciais de Banco de Dados, RabbitMQ e Redis:"
     DB_NAME="$DB_NAME_CURRENT"
     DB_USER="$DB_USER_CURRENT"
-    prompt_for_variable "DB_PASS" "  Senha do Banco de Dados (DB_PASS)" "" "" "Deixe em branco para NÃO alterar"
+    prompt_for_variable "DB_PASS" "  Senha do Banco de Dados (DB_PASS)" "" "" "Deixe em branco para NÃO alterar" validate_secret
     DB_PASS=${DB_PASS:-$DB_PASS_CURRENT}
 
     RABBIT_USER="$RABBIT_USER_CURRENT"
-    prompt_for_variable "RABBIT_PASS" "  Senha do RabbitMQ (RABBIT_PASS)" "" "" "Deixe em branco para NÃO alterar"
+    prompt_for_variable "RABBIT_PASS" "  Senha do RabbitMQ (RABBIT_PASS)" "" "" "Deixe em branco para NÃO alterar" validate_secret
     RABBIT_PASS=${RABBIT_PASS:-$RABBIT_PASS_CURRENT}
 
-    prompt_for_variable "REDIS_PASSWORD" "  Senha do Redis" "${REDIS_PASSWORD_CURRENT}" "" "Deixe em branco para NÃO alterar"
+    prompt_for_variable "REDIS_PASSWORD" "  Senha do Redis" "${REDIS_PASSWORD_CURRENT}" "" "Deixe em branco para NÃO alterar" validate_secret
     REDIS_PASSWORD=${REDIS_PASSWORD:-$REDIS_PASSWORD_CURRENT}
   else
     # Carrega todas as configurações existentes sem perguntar
@@ -995,15 +1015,18 @@ collect_data_update_simplified() {
     RABBIT_PASS="$RABBIT_PASS_CURRENT"
     
     REDIS_PASSWORD="$REDIS_PASSWORD_CURRENT"
+    WACALLS_PUBLIC_IP="$WACALLS_PUBLIC_IP_CURRENT"
+    WACALLS_WEBRTC_UDP_PORT="$WACALLS_WEBRTC_UDP_PORT_CURRENT"
   fi
 
   generate_internal_secrets
+  apply_current_values
 }
 
 collect_data_update() {
   echo_info "Carregando configurações existentes para atualização..."
-  if ! load_env_file; then
-    echo_warning "Nenhum arquivo '$APP_DIR/$ENV_FILE' encontrado. Não é possível atualizar."
+  if ! read_current_values; then
+    echo_warning "Nenhum compose em '$APP_DIR/docker-compose.yml'. Não é possível atualizar."
     read -r -p "Deseja prosseguir com uma Nova Instalação? (s/N): " choice
     if [[ "$choice" == "s" || "$choice" == "S" ]]; then
       if [ "$OPERATION_TYPE" == "ghcr" ]; then
@@ -1037,20 +1060,21 @@ collect_data_update() {
   collect_gerencianet_credentials
   collect_other_configs
 
-  echo_info "Credenciais de Banco de Dados, RabbitMQ e Redis: Para alterá-las, edite o arquivo '$APP_DIR/$ENV_FILE' manualmente ANTES de rodar a atualização, ou use a opção de Resetar Instalação."
+  echo_info "Credenciais de Banco de Dados, RabbitMQ e Redis: Para alterá-las, edite '$APP_DIR/docker-compose.yml' manualmente ANTES de rodar a atualização, ou use a opção de Resetar Instalação."
   DB_NAME="$DB_NAME_CURRENT"
   DB_USER="$DB_USER_CURRENT"
-  prompt_for_variable "DB_PASS" "  Senha do Banco de Dados (DB_PASS)" "" "" "Deixe em branco para NÃO alterar se já existir"
+  prompt_for_variable "DB_PASS" "  Senha do Banco de Dados (DB_PASS)" "" "" "Deixe em branco para NÃO alterar se já existir" validate_secret
   DB_PASS=${DB_PASS:-$DB_PASS_CURRENT}
 
   RABBIT_USER="$RABBIT_USER_CURRENT"
-  prompt_for_variable "RABBIT_PASS" "  Senha do RabbitMQ (RABBIT_PASS)" "" "" "Deixe em branco para NÃO alterar"
+  prompt_for_variable "RABBIT_PASS" "  Senha do RabbitMQ (RABBIT_PASS)" "" "" "Deixe em branco para NÃO alterar" validate_secret
   RABBIT_PASS=${RABBIT_PASS:-$RABBIT_PASS_CURRENT}
 
-  prompt_for_variable "REDIS_PASSWORD" "  Senha do Redis" "${REDIS_PASSWORD_CURRENT}" "" "Deixe em branco para NÃO alterar"
+  prompt_for_variable "REDIS_PASSWORD" "  Senha do Redis" "${REDIS_PASSWORD_CURRENT}" "" "Deixe em branco para NÃO alterar" validate_secret
   REDIS_PASSWORD=${REDIS_PASSWORD:-$REDIS_PASSWORD_CURRENT}
 
   generate_internal_secrets
+  apply_current_values
 }
 
 run_new_ghcr_installation() {
@@ -1058,8 +1082,7 @@ run_new_ghcr_installation() {
   echo_info "Iniciando Nova Instalação (Imagens Remotas GHCR)..."
   collect_all_data_new_install
   show_summary_and_confirm
-  save_env_file
-  copy_docker_compose_template_and_adjust
+  render_compose
   sync_config_templates
   generate_pgbouncer_config
   docker_login
@@ -1074,8 +1097,7 @@ run_update_ghcr_installation() {
   echo_info "Iniciando Atualização da Instalação (Imagens Remotas GHCR)..."
   collect_data_update_simplified
   show_summary_and_confirm
-  save_env_file
-  copy_docker_compose_template_and_adjust
+  render_compose
   sync_config_templates
   generate_pgbouncer_config
   docker_login
@@ -1134,10 +1156,10 @@ build_local_images() {
   fi
 
   echo_info "Iniciando build das imagens Docker locais..."
-  for svc in backend frontend; do
+  for svc in backend frontend wacalls; do
     local dockerfile_path="$repo_source_dir/$svc/Dockerfile"
     local context_path="$repo_source_dir/$svc"
-    local image_name="oplano/${svc}:${DOCKER_TAG}"
+    local image_name="soluschat/${svc}:${DOCKER_TAG}"
 
     if [ -f "$dockerfile_path" ]; then
       echo_info "Buildando imagem $image_name a partir de $context_path..."
@@ -1150,7 +1172,6 @@ build_local_images() {
       echo_warning "Dockerfile para o serviço '$svc' não encontrado em '$dockerfile_path'. Pulando build."
     fi
   done
-  copy_docker_compose_template_and_adjust
 }
 
 run_new_local_build_installation() {
@@ -1159,7 +1180,7 @@ run_new_local_build_installation() {
   setup_local_repo
   collect_all_data_new_install
   show_summary_and_confirm
-  save_env_file
+  render_compose
   build_local_images
   sync_config_templates
   generate_pgbouncer_config
@@ -1174,7 +1195,7 @@ run_update_local_build_installation() {
   setup_local_repo
   collect_data_update_simplified
   show_summary_and_confirm
-  save_env_file
+  render_compose
   build_local_images
   sync_config_templates
   generate_pgbouncer_config
@@ -1190,7 +1211,7 @@ run_reset_installation() {
   echo_info "Esta operação irá:"
   echo_info "  1. Parar e remover todos os contêineres da aplicação (definidos em docker-compose.yml)."
   echo_info "  2. Remover os volumes Docker associados (PERDA DE DADOS: postgres_data, redis_data, etc.)."
-  echo_info "  3. Apagar o arquivo de configuração principal '$APP_DIR/$ENV_FILE'."
+  echo_info "  3. Apagar o docker-compose.yml renderizado em '$APP_DIR'."
   echo_info "  4. Apagar o diretório de código fonte baixado ($APP_DIR/source_code) se existir."
   echo_info "  5. Limpar o sistema Docker de imagens e volumes órfãos."
   echo ""
@@ -1202,7 +1223,7 @@ run_reset_installation() {
 
   echo_info "Iniciando reset da instalação..."
 
-  if [ -f "$APP_DIR/docker-compose.yml" ] && [ -f "$APP_DIR/.env" ]; then
+  if [ -f "$APP_DIR/docker-compose.yml" ]; then
     echo_info "Parando e removendo contêineres e volumes Docker..."
     cd "$APP_DIR" || echo_warning "Não foi possível acessar $APP_DIR"
     if docker compose down --volumes --remove-orphans; then
@@ -1211,7 +1232,7 @@ run_reset_installation() {
       echo_warning "Falha ao parar/remover contêineres com Docker Compose."
     fi
   else
-    echo_warning "Arquivo docker-compose.yml ou .env não encontrado em $APP_DIR. Pulando 'docker compose down'."
+    echo_warning "Arquivo docker-compose.yml não encontrado em $APP_DIR. Pulando 'docker compose down'."
   fi
 
   echo_info "Limpando sistema Docker (docker system prune)..."
@@ -1219,14 +1240,6 @@ run_reset_installation() {
     echo_success "Sistema Docker limpo."
   else
     echo_warning "Falha ao limpar o sistema Docker."
-  fi
-
-  if [ -f "$APP_DIR/$ENV_FILE" ]; then
-    echo_info "Removendo arquivo de configuração principal '$APP_DIR/$ENV_FILE'..."
-    rm -f "$APP_DIR/$ENV_FILE"
-    echo_success "Arquivo '$APP_DIR/$ENV_FILE' removido."
-  else
-    echo_info "Arquivo de configuração principal '$APP_DIR/$ENV_FILE' não encontrado."
   fi
 
   if [ -d "$APP_DIR/source_code" ]; then
@@ -1280,6 +1293,7 @@ show_post_install_info() {
   echo "  Ver logs de um serviço específico:"
   echo "    ${COLOR_GREEN}cd $APP_DIR && docker compose logs -f backend${COLOR_RESET}"
   echo "    ${COLOR_GREEN}cd $APP_DIR && docker compose logs -f frontend${COLOR_RESET}"
+  echo "    ${COLOR_GREEN}cd $APP_DIR && docker compose logs -f wacalls${COLOR_RESET}"
   echo ""
   echo "  Verificar status dos serviços:"
   echo "    ${COLOR_GREEN}cd $APP_DIR && docker compose ps${COLOR_RESET}"
@@ -1290,7 +1304,7 @@ show_post_install_info() {
   echo "${COLOR_YELLOW}⚠️  Importante:${COLOR_RESET}"
   echo "  - Aguarde alguns minutos para todos os serviços iniciarem completamente"
   echo "  - O certificado SSL pode levar alguns minutos para ser gerado na primeira vez"
-  echo "  - Suas configurações foram salvas em: ${COLOR_YELLOW}$APP_DIR/$ENV_FILE${COLOR_RESET}"
+  echo "  - Suas configurações foram salvas em: ${COLOR_YELLOW}$APP_DIR/docker-compose.yml${COLOR_RESET}"
   echo "  - ${COLOR_RED}MANTENHA ESTE ARQUIVO SEGURO!${COLOR_RESET} Ele contém todas as senhas e chaves"
   echo ""
   echo "${COLOR_CYAN}=====================================================${COLOR_RESET}"
@@ -1299,8 +1313,8 @@ show_post_install_info() {
 main_menu_header() {
   clear
   echo "${COLOR_CYAN}=====================================================${COLOR_RESET}"
-  echo "${COLOR_CYAN}  🚀 Instalador OPLANO - Versão $SCRIPT_VERSION ${COLOR_RESET}"
-  echo "${COLOR_CYAN}  📦 Sistema Completo de Gestão WhatsApp ${COLOR_RESET}"
+  echo "${COLOR_CYAN}  🚀 Instalador SolusChat - Versão $SCRIPT_VERSION ${COLOR_RESET}"
+  echo "${COLOR_CYAN}  📦 Atendimento e voz no WhatsApp ${COLOR_RESET}"
   echo "${COLOR_CYAN}  👨‍💻 Autor: Joseph Fernandes ${COLOR_RESET}"
   echo "${COLOR_CYAN}=====================================================${COLOR_RESET}"
   echo ""
@@ -1367,15 +1381,8 @@ INSTALLER_DIR="$(pwd)"
 echo_info "Diretório do instalador: $INSTALLER_DIR"
 echo_info "Diretório da aplicação: $APP_DIR"
 
-# Define o caminho do template baseado no diretório do instalador
 if [ ! -f "$DOCKER_COMPOSE_TEMPLATE_PATH" ]; then
-  # Tenta encontrar o template no diretório atual
-  if [ -f "./docker-compose.yml" ]; then
-    DOCKER_COMPOSE_TEMPLATE_PATH="$(pwd)/docker-compose.yml"
-    echo_info "Template docker-compose.yml encontrado em: $DOCKER_COMPOSE_TEMPLATE_PATH"
-  else
-    echo_error "Template docker-compose.yml não encontrado. Certifique-se de executar o script do diretório do instalador."
-  fi
+  echo_error "Template não encontrado em $DOCKER_COMPOSE_TEMPLATE_PATH."
 fi
 
 if [ ! -d "$CONFIG_TEMPLATE_DIR" ]; then
