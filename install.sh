@@ -10,12 +10,14 @@ CONFIG_DIR="$APP_DIR/config"
 DOCKER_COMPOSE_TEMPLATE_PATH="${SCRIPT_DIR}/docker-compose.template.yml"
 CONFIG_TEMPLATE_DIR="${SCRIPT_DIR}/config"
 
-COLOR_RESET=$(tput sgr0)
-COLOR_RED=$(tput setaf 1)
-COLOR_GREEN=$(tput setaf 2)
-COLOR_YELLOW=$(tput setaf 3)
-COLOR_BLUE=$(tput setaf 4)
-COLOR_CYAN=$(tput setaf 6)
+tput_or_empty() { tput "$@" 2>/dev/null || true; }
+
+COLOR_RESET=$(tput_or_empty sgr0)
+COLOR_RED=$(tput_or_empty setaf 1)
+COLOR_GREEN=$(tput_or_empty setaf 2)
+COLOR_YELLOW=$(tput_or_empty setaf 3)
+COLOR_BLUE=$(tput_or_empty setaf 4)
+COLOR_CYAN=$(tput_or_empty setaf 6)
 
 # --- Logs ---
 echo_info() { echo -e "${COLOR_BLUE}ℹ️  INFO:${COLOR_RESET} $1"; }
