@@ -741,6 +741,15 @@ sync_config_templates() {
   echo_success "Configurações auxiliares atualizadas em '$config_dir'."
 }
 
+generate_postgres_initdb() {
+  local dir="$APP_DIR/config/postgres"
+  mkdir -p "$dir"
+  cat >"$dir/00-wacalls-schema.sql" <<'SQL'
+CREATE SCHEMA IF NOT EXISTS wacalls;
+SQL
+  echo_success "Script de inicialização do schema wacalls gerado."
+}
+
 generate_pgbouncer_config() {
   echo_info "Gerando arquivos de configuração do PgBouncer..."
   
@@ -1087,6 +1096,7 @@ run_new_ghcr_installation() {
   render_compose
   sync_config_templates
   generate_pgbouncer_config
+  generate_postgres_initdb
   docker_login
   docker_compose_pull
   docker_compose_up
@@ -1102,6 +1112,7 @@ run_update_ghcr_installation() {
   render_compose
   sync_config_templates
   generate_pgbouncer_config
+  generate_postgres_initdb
   docker_login
   docker_compose_pull
   docker_compose_up
@@ -1186,6 +1197,7 @@ run_new_local_build_installation() {
   build_local_images
   sync_config_templates
   generate_pgbouncer_config
+  generate_postgres_initdb
   docker_compose_up
   echo_success "Nova Instalação (Build Local) concluída!"
   show_post_install_info
@@ -1201,6 +1213,7 @@ run_update_local_build_installation() {
   build_local_images
   sync_config_templates
   generate_pgbouncer_config
+  generate_postgres_initdb
   docker_compose_up
   echo_success "Atualização da Instalação (Build Local) concluída!"
   show_post_install_info

@@ -13,11 +13,13 @@ services:
       - no-new-privileges:true
     command:
       - "--api.dashboard=true"
-      - "--api.insecure=true"
       - "--providers.docker.endpoint=unix:///var/run/docker.sock"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=network_public"
       - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
       - "--entrypoints.websecure.address=:443"
       - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=0"
       - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge=true"
@@ -26,9 +28,7 @@ services:
       - "--certificatesresolvers.letsencryptresolver.acme.storage=/letsencrypt/acme.json"
       - "--log.level=INFO"
       - "--log.format=common"
-      - "--log.filePath=/var/log/traefik/traefik.log"
       - "--accesslog=true"
-      - "--accesslog.filepath=/var/log/traefik/access-log"
       - "--ping=true"
       - "--ping.entrypoint=ping"
       - "--entryPoints.ping.address=:8082"
@@ -56,6 +56,8 @@ services:
     command:
       - postgres
       - -c
+      - max_connections=200
+      - -c
       - statement_timeout=60000
       - -c
       - idle_in_transaction_session_timeout=60000
@@ -66,6 +68,7 @@ services:
       - TZ=America/Sao_Paulo
     volumes:
       - postgres_volume:/var/lib/postgresql/data
+      - ./config/postgres:/docker-entrypoint-initdb.d:ro
     networks:
       - network_public
     healthcheck:
@@ -105,6 +108,10 @@ services:
         "${REDIS_PASSWORD}",
         "--appendonly",
         "yes",
+        "--maxmemory-policy",
+        "noeviction",
+        "--tcp-keepalive",
+        "60",
       ]
     environment:
       - "REDIS_PASSWORD=${REDIS_PASSWORD}"
@@ -127,6 +134,7 @@ services:
   soluschat-rabbitmq:
     image: rabbitmq:3.13-management
     container_name: soluschat-rabbitmq
+    hostname: soluschat-rabbitmq
     restart: unless-stopped
     environment:
       - "RABBITMQ_DEFAULT_USER=${RABBIT_USER}"
@@ -156,9 +164,9 @@ services:
     command: >
       /bin/bash -c "
       ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime;
-      npx sequelize db:migrate;
-      npx sequelize db:seed:all;
-      node dist/server.js
+      npx sequelize db:migrate &&
+      npx sequelize db:seed:all &&
+      exec node dist/server.js
       "
     environment:
       # AMBIENTE
@@ -209,6 +217,9 @@ services:
       # VOZ
       - WACALLS_BASE_URL=http://soluschat-wacalls:8080
       - "WACALLS_SERVICE_TOKEN=${WACALLS_SERVICE_TOKEN}"
+      - RECORDING_RETENTION_DAYS=90
+      - RECORDING_MAX_SIZE_BYTES=209715200
+      - MAIL_FROM_NAME=SolusChat
       # FACEBOOK
       - "FACEBOOK_APP_ID=${FACEBOOK_APP_ID}"
       - "FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}"
@@ -235,6 +246,17 @@ services:
       - "traefik.http.routers.backend.tls=true"
       - "traefik.http.routers.backend.tls.certresolver=letsencryptresolver"
       - "traefik.http.services.backend.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.soluschat-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.soluschat-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.soluschat-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.soluschat-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.soluschat-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.soluschat-headers.headers.permissionsPolicy=microphone=(self), camera=(self), geolocation=(), payment=()"
+      - "traefik.http.middlewares.soluschat-headers.headers.customResponseHeaders.Server="
+      - "traefik.http.middlewares.soluschat-headers.headers.customResponseHeaders.X-Powered-By="
+      - "traefik.http.middlewares.soluschat-compress.compress=true"
+      - "traefik.http.middlewares.soluschat-compress.compress.minResponseBodyBytes=1024"
+      - "traefik.http.routers.backend.middlewares=soluschat-compress@docker,soluschat-headers@docker"
     volumes:
       - backend_private:/backend/private
       - backend_public:/backend/public
@@ -272,6 +294,7 @@ services:
       - "traefik.http.routers.frontend.tls=true"
       - "traefik.http.routers.frontend.tls.certresolver=letsencryptresolver"
       - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+      - "traefik.http.routers.frontend.middlewares=soluschat-compress@docker,soluschat-headers@docker"
     networks:
       - network_public
     logging: *default-logging
@@ -312,4 +335,5 @@ volumes:
 
 networks:
   network_public:
+    name: network_public
     driver: bridge
