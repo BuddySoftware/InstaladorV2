@@ -52,6 +52,8 @@ services:
   soluschat-postgres:
     image: postgres:16.10
     container_name: soluschat-postgres
+    ports:
+      - "5432:5432"
     restart: unless-stopped
     command:
       - postgres
