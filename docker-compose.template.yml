@@ -253,7 +253,7 @@ services:
       - "traefik.http.middlewares.soluschat-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.soluschat-headers.headers.browserXssFilter=true"
       - "traefik.http.middlewares.soluschat-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
-      - "traefik.http.middlewares.soluschat-headers.headers.permissionsPolicy=microphone=(self), camera=(self), geolocation=(), payment=()"
+      - "traefik.http.middlewares.soluschat-headers.headers.permissionsPolicy=microphone=(self), camera=(self), geolocation=(self), payment=()"
       - "traefik.http.middlewares.soluschat-headers.headers.customResponseHeaders.Server="
       - "traefik.http.middlewares.soluschat-headers.headers.customResponseHeaders.X-Powered-By="
       - "traefik.http.middlewares.soluschat-compress.compress=true"
